@@ -9,6 +9,8 @@ import Auth from "./pages/Auth";
 import StudentDashboard from "./pages/dashboard/StudentDashboard";
 import InstructorDashboard from "./pages/dashboard/InstructorDashboard";
 import AdminDashboard from "./pages/dashboard/AdminDashboard";
+import CoursePlayer from "./components/course/CoursePlayer";
+import CourseBuilderWizard from "./components/course/CourseBuilderWizard";
 import ProtectedRoute from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
 
@@ -25,6 +27,16 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
             
+            {/* Course Player */}
+            <Route 
+              path="/course/:courseId" 
+              element={
+                <ProtectedRoute allowedRoles={["student", "instructor"]}>
+                  <CoursePlayer />
+                </ProtectedRoute>
+              } 
+            />
+            
             {/* Protected Student Routes */}
             <Route 
               path="/dashboard/student/*" 
@@ -37,10 +49,20 @@ const App = () => (
             
             {/* Protected Instructor Routes */}
             <Route 
-              path="/dashboard/instructor/*" 
+              path="/dashboard/instructor" 
               element={
                 <ProtectedRoute allowedRoles={["instructor"]}>
                   <InstructorDashboard />
+                </ProtectedRoute>
+              } 
+            />
+            
+            {/* Course Builder */}
+            <Route 
+              path="/dashboard/instructor/create" 
+              element={
+                <ProtectedRoute allowedRoles={["instructor"]}>
+                  <CourseBuilderWizard />
                 </ProtectedRoute>
               } 
             />

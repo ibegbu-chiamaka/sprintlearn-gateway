@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -16,64 +18,130 @@ import {
   User,
   LayoutDashboard,
   GraduationCap,
-  Settings
+  Star
 } from "lucide-react";
 
-// Mock data for demo
-const enrolledCourses = [
-  {
-    id: "1",
-    title: "Complete React Developer Course",
-    instructor: "Jane Smith",
-    progress: 65,
-    thumbnail: "https://images.unsplash.com/photo-1633356122544-f134324a6cee?w=400&h=225&fit=crop",
-    totalSessions: 42,
-    completedSessions: 27
-  },
-  {
-    id: "2", 
-    title: "TypeScript Masterclass",
-    instructor: "John Doe",
-    progress: 30,
-    thumbnail: "https://images.unsplash.com/photo-1516116216624-53e697fedbea?w=400&h=225&fit=crop",
-    totalSessions: 35,
-    completedSessions: 10
-  },
-  {
-    id: "3",
-    title: "Node.js Backend Development",
-    instructor: "Mike Johnson",
-    progress: 100,
-    thumbnail: "https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=400&h=225&fit=crop",
-    totalSessions: 28,
-    completedSessions: 28
-  }
-];
+interface Course {
+  id: string;
+  title: string;
+  description: string | null;
+  thumbnail_url: string | null;
+  price: number;
+  instructor: {
+    full_name: string | null;
+  };
+}
 
-const recommendedCourses = [
-  {
-    id: "4",
-    title: "Next.js 14 Complete Guide",
-    instructor: "Sarah Wilson",
-    price: 49.99,
-    thumbnail: "https://images.unsplash.com/photo-1627398242454-45a1465c2479?w=400&h=225&fit=crop",
-    rating: 4.8,
-    students: 1234
-  },
-  {
-    id: "5",
-    title: "AWS Cloud Practitioner",
-    instructor: "David Lee",
-    price: 79.99,
-    thumbnail: "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400&h=225&fit=crop",
-    rating: 4.9,
-    students: 2567
-  }
-];
+interface Enrollment {
+  id: string;
+  course_id: string;
+  completed_at: string | null;
+  course: Course & {
+    modules: {
+      id: string;
+      sessions: { id: string }[];
+    }[];
+  };
+}
 
 export default function StudentDashboard() {
   const { user, profile, signOut } = useAuth();
   const [activeTab, setActiveTab] = useState("my-courses");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Fetch enrollments with course details
+  const { data: enrollments, isLoading: enrollmentsLoading } = useQuery({
+    queryKey: ["enrollments", profile?.id],
+    queryFn: async () => {
+      if (!profile?.id) return [];
+
+      const { data, error } = await supabase
+        .from("enrollments")
+        .select(`
+          *,
+          course:courses(
+            *,
+            instructor:profiles!courses_instructor_id_fkey(full_name),
+            modules(id, sessions(id))
+          )
+        `)
+        .eq("user_id", profile.id);
+
+      if (error) throw error;
+      return data as Enrollment[];
+    },
+    enabled: !!profile?.id
+  });
+
+  // Fetch user progress
+  const { data: userProgress } = useQuery({
+    queryKey: ["user-progress", profile?.id],
+    queryFn: async () => {
+      if (!profile?.id) return [];
+
+      const { data, error } = await supabase
+        .from("user_progress")
+        .select("*")
+        .eq("user_id", profile.id);
+
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!profile?.id
+  });
+
+  // Fetch available courses for marketplace
+  const { data: availableCourses } = useQuery({
+    queryKey: ["available-courses"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("courses")
+        .select(`
+          *,
+          instructor:profiles!courses_instructor_id_fkey(full_name)
+        `)
+        .eq("is_published", true)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      return data as Course[];
+    }
+  });
+
+  // Calculate progress for a course
+  const getCourseProgress = (enrollment: Enrollment): number => {
+    const totalSessions = enrollment.course.modules?.reduce(
+      (acc, m) => acc + (m.sessions?.length || 0), 0
+    ) || 0;
+
+    if (totalSessions === 0) return 0;
+
+    const sessionIds = enrollment.course.modules?.flatMap(
+      m => m.sessions?.map(s => s.id) || []
+    ) || [];
+
+    const completedSessions = userProgress?.filter(
+      p => sessionIds.includes(p.session_id) && p.completed
+    ).length || 0;
+
+    return Math.round((completedSessions / totalSessions) * 100);
+  };
+
+  // Get completed courses count
+  const completedCoursesCount = enrollments?.filter(
+    e => getCourseProgress(e) === 100
+  ).length || 0;
+
+  // Filter courses not enrolled
+  const enrolledCourseIds = enrollments?.map(e => e.course_id) || [];
+  const recommendedCourses = availableCourses?.filter(
+    c => !enrolledCourseIds.includes(c.id)
+  ).slice(0, 4);
+
+  // Search filter
+  const filteredCourses = recommendedCourses?.filter(c =>
+    c.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -181,6 +249,8 @@ export default function StudentDashboard() {
                 <input
                   type="text"
                   placeholder="Search courses..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10 pr-4 py-2 rounded-lg border border-input bg-background text-sm w-64 focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
@@ -202,7 +272,7 @@ export default function StudentDashboard() {
                   <BookOpen className="w-6 h-6 text-sprint" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold text-foreground">{enrolledCourses.length}</p>
+                  <p className="text-2xl font-bold text-foreground">{enrollments?.length || 0}</p>
                   <p className="text-sm text-muted-foreground">Enrolled Courses</p>
                 </div>
               </div>
@@ -213,8 +283,10 @@ export default function StudentDashboard() {
                   <Clock className="w-6 h-6 text-primary" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold text-foreground">24h</p>
-                  <p className="text-sm text-muted-foreground">Learning Time</p>
+                  <p className="text-2xl font-bold text-foreground">
+                    {userProgress?.filter(p => p.completed).length || 0}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Sessions Completed</p>
                 </div>
               </div>
             </div>
@@ -224,7 +296,7 @@ export default function StudentDashboard() {
                   <Award className="w-6 h-6 text-success" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold text-foreground">1</p>
+                  <p className="text-2xl font-bold text-foreground">{completedCoursesCount}</p>
                   <p className="text-sm text-muted-foreground">Certificates Earned</p>
                 </div>
               </div>
@@ -245,49 +317,80 @@ export default function StudentDashboard() {
               </Button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {enrolledCourses.map((course) => (
-                <motion.div
-                  key={course.id}
-                  className="bg-card border border-border rounded-xl overflow-hidden card-hover"
-                  whileHover={{ y: -4 }}
+            {enrollmentsLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-sprint" />
+              </div>
+            ) : enrollments && enrollments.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {enrollments.map((enrollment) => {
+                  const progress = getCourseProgress(enrollment);
+                  const totalSessions = enrollment.course.modules?.reduce(
+                    (acc, m) => acc + (m.sessions?.length || 0), 0
+                  ) || 0;
+                  const completedSessions = Math.round((progress / 100) * totalSessions);
+
+                  return (
+                    <motion.div
+                      key={enrollment.id}
+                      className="bg-card border border-border rounded-xl overflow-hidden card-hover"
+                      whileHover={{ y: -4 }}
+                    >
+                      <Link to={`/course/${enrollment.course_id}`}>
+                        <div className="relative aspect-video">
+                          <img
+                            src={enrollment.course.thumbnail_url || "https://images.unsplash.com/photo-1633356122544-f134324a6cee?w=400&h=225&fit=crop"}
+                            alt={enrollment.course.title}
+                            className="w-full h-full object-cover"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                          <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                            <div className="w-14 h-14 rounded-full bg-sprint flex items-center justify-center glow-sprint">
+                              <Play className="w-6 h-6 text-sprint-foreground ml-1" />
+                            </div>
+                          </div>
+                          {progress === 100 && (
+                            <div className="absolute top-3 right-3 px-2 py-1 rounded-full bg-success text-success-foreground text-xs font-medium">
+                              Completed
+                            </div>
+                          )}
+                        </div>
+                        <div className="p-4">
+                          <h3 className="font-semibold text-card-foreground mb-1 line-clamp-1">
+                            {enrollment.course.title}
+                          </h3>
+                          <p className="text-sm text-muted-foreground mb-3">
+                            {enrollment.course.instructor?.full_name || "Instructor"}
+                          </p>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="text-muted-foreground">
+                                {completedSessions}/{totalSessions} sessions
+                              </span>
+                              <span className="font-medium text-sprint">{progress}%</span>
+                            </div>
+                            <Progress value={progress} className="h-2" />
+                          </div>
+                        </div>
+                      </Link>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-12 bg-muted rounded-xl">
+                <BookOpen className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                <p className="text-muted-foreground">No courses enrolled yet</p>
+                <Button
+                  variant="sprint"
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => setActiveTab("browse")}
                 >
-                  <div className="relative aspect-video">
-                    <img
-                      src={course.thumbnail}
-                      alt={course.title}
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                    <button className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
-                      <div className="w-14 h-14 rounded-full bg-sprint flex items-center justify-center glow-sprint">
-                        <Play className="w-6 h-6 text-sprint-foreground ml-1" />
-                      </div>
-                    </button>
-                    {course.progress === 100 && (
-                      <div className="absolute top-3 right-3 px-2 py-1 rounded-full bg-success text-success-foreground text-xs font-medium">
-                        Completed
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-4">
-                    <h3 className="font-semibold text-card-foreground mb-1 line-clamp-1">
-                      {course.title}
-                    </h3>
-                    <p className="text-sm text-muted-foreground mb-3">{course.instructor}</p>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">
-                          {course.completedSessions}/{course.totalSessions} sessions
-                        </span>
-                        <span className="font-medium text-sprint">{course.progress}%</span>
-                      </div>
-                      <Progress value={course.progress} className="h-2" />
-                    </div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
+                  Browse Courses
+                </Button>
+              </div>
+            )}
           </motion.section>
 
           {/* Recommended Courses */}
@@ -298,47 +401,97 @@ export default function StudentDashboard() {
           >
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-foreground">Recommended for You</h2>
-              <Button variant="ghost" size="sm" className="text-muted-foreground">
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="text-muted-foreground"
+                onClick={() => setActiveTab("browse")}
+              >
                 Browse All <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {recommendedCourses.map((course) => (
-                <motion.div
-                  key={course.id}
-                  className="bg-card border border-border rounded-xl overflow-hidden card-hover flex"
-                  whileHover={{ y: -4 }}
-                >
-                  <div className="w-48 flex-shrink-0">
-                    <img
-                      src={course.thumbnail}
-                      alt={course.title}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                  <div className="p-4 flex flex-col justify-between flex-1">
-                    <div>
-                      <h3 className="font-semibold text-card-foreground mb-1">
-                        {course.title}
-                      </h3>
-                      <p className="text-sm text-muted-foreground mb-2">{course.instructor}</p>
-                      <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                        <span>⭐ {course.rating}</span>
-                        <span>{course.students.toLocaleString()} students</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between mt-4">
-                      <span className="text-lg font-bold text-sprint">${course.price}</span>
-                      <Button variant="sprint" size="sm">Enroll Now</Button>
-                    </div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
+            {filteredCourses && filteredCourses.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {filteredCourses.map((course) => (
+                  <CourseCard key={course.id} course={course} />
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12 bg-muted rounded-xl">
+                <Star className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                <p className="text-muted-foreground">No recommendations available</p>
+              </div>
+            )}
           </motion.section>
         </div>
       </main>
     </div>
+  );
+}
+
+// Course card component for marketplace
+function CourseCard({ course }: { course: Course }) {
+  const { profile } = useAuth();
+  const queryClient = useQueryClient();
+
+  const enrollMutation = useMutation({
+    mutationFn: async () => {
+      if (!profile?.id) throw new Error("Not authenticated");
+
+      const { error } = await supabase
+        .from("enrollments")
+        .insert({
+          course_id: course.id,
+          user_id: profile.id
+        });
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["enrollments"] });
+      queryClient.invalidateQueries({ queryKey: ["available-courses"] });
+    }
+  });
+
+  return (
+    <motion.div
+      className="bg-card border border-border rounded-xl overflow-hidden card-hover flex"
+      whileHover={{ y: -4 }}
+    >
+      <div className="w-48 flex-shrink-0">
+        <img
+          src={course.thumbnail_url || "https://images.unsplash.com/photo-1633356122544-f134324a6cee?w=400&h=225&fit=crop"}
+          alt={course.title}
+          className="w-full h-full object-cover"
+        />
+      </div>
+      <div className="p-4 flex flex-col justify-between flex-1">
+        <div>
+          <h3 className="font-semibold text-card-foreground mb-1">
+            {course.title}
+          </h3>
+          <p className="text-sm text-muted-foreground mb-2">
+            {course.instructor?.full_name || "Instructor"}
+          </p>
+          <p className="text-sm text-muted-foreground line-clamp-2">
+            {course.description}
+          </p>
+        </div>
+        <div className="flex items-center justify-between mt-4">
+          <span className="text-lg font-bold text-sprint">
+            {course.price > 0 ? `$${course.price}` : "Free"}
+          </span>
+          <Button
+            variant="sprint"
+            size="sm"
+            onClick={() => enrollMutation.mutate()}
+            disabled={enrollMutation.isPending}
+          >
+            {enrollMutation.isPending ? "Enrolling..." : "Enroll Now"}
+          </Button>
+        </div>
+      </div>
+    </motion.div>
   );
 }
