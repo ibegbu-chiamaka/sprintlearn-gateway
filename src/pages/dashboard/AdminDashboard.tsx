@@ -8,13 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -26,25 +19,28 @@ import {
   DollarSign,
   BookOpen,
   BadgeCheck,
-  ChevronRight,
   Zap,
   LogOut,
   User,
   LayoutDashboard,
   Shield,
-  Settings,
   CheckCircle,
   XCircle,
   Eye,
   Search,
   FileText,
-  Clock,
   TrendingUp,
-  Download,
-  Trash2,
-  Ban
+  BarChart3,
+  Clock,
 } from "lucide-react";
 import { toast } from "sonner";
+import AnalyticsCharts from "@/components/admin/AnalyticsCharts";
+import {
+  notifyVerificationApproved,
+  notifyVerificationRejected,
+  notifyWithdrawalApproved,
+  notifyWithdrawalRejected,
+} from "@/lib/notifications";
 
 interface VerificationRequest {
   id: string;
@@ -231,6 +227,12 @@ export default function AdminDashboard() {
         .eq("id", request.instructor_id);
 
       if (profileError) throw profileError;
+
+      // Send email notification
+      notifyVerificationApproved(
+        request.instructor?.email,
+        request.instructor?.full_name || undefined
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["verification-requests"] });
@@ -244,7 +246,7 @@ export default function AdminDashboard() {
 
   // Reject verification mutation
   const rejectVerificationMutation = useMutation({
-    mutationFn: async (requestId: string) => {
+    mutationFn: async ({ requestId, email, name }: { requestId: string; email: string; name?: string }) => {
       const { error } = await supabase
         .from("verification_requests")
         .update({ 
@@ -254,6 +256,9 @@ export default function AdminDashboard() {
         .eq("id", requestId);
 
       if (error) throw error;
+
+      // Send email notification
+      notifyVerificationRejected(email, name);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["verification-requests"] });
@@ -263,7 +268,19 @@ export default function AdminDashboard() {
 
   // Process withdrawal mutation
   const processWithdrawalMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: "approved" | "rejected" }) => {
+    mutationFn: async ({ 
+      id, 
+      status, 
+      email, 
+      name, 
+      amount 
+    }: { 
+      id: string; 
+      status: "approved" | "rejected"; 
+      email: string; 
+      name?: string; 
+      amount: number;
+    }) => {
       const { error } = await supabase
         .from("withdrawal_requests")
         .update({ 
@@ -273,6 +290,13 @@ export default function AdminDashboard() {
         .eq("id", id);
 
       if (error) throw error;
+
+      // Send email notification
+      if (status === "approved") {
+        notifyWithdrawalApproved(email, name, amount);
+      } else {
+        notifyWithdrawalRejected(email, name, amount);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["withdrawal-requests"] });
@@ -384,6 +408,17 @@ export default function AdminDashboard() {
                 {pendingWithdrawals.length}
               </span>
             )}
+          </button>
+          <button
+            onClick={() => setActiveTab("analytics")}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              activeTab === "analytics"
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "text-sidebar-foreground hover:bg-sidebar-accent/50"
+            }`}
+          >
+            <BarChart3 className="w-5 h-5" />
+            Analytics
           </button>
         </nav>
 
@@ -686,7 +721,11 @@ export default function AdminDashboard() {
                             <Button
                               variant="destructive"
                               size="sm"
-                              onClick={() => rejectVerificationMutation.mutate(request.id)}
+                              onClick={() => rejectVerificationMutation.mutate({
+                                requestId: request.id,
+                                email: request.instructor?.email,
+                                name: request.instructor?.full_name || undefined
+                              })}
                               disabled={rejectVerificationMutation.isPending}
                             >
                               <XCircle className="w-4 h-4 mr-1" />
@@ -919,7 +958,10 @@ export default function AdminDashboard() {
                               size="sm"
                               onClick={() => processWithdrawalMutation.mutate({ 
                                 id: withdrawal.id, 
-                                status: "approved" 
+                                status: "approved",
+                                email: withdrawal.instructor?.email,
+                                name: withdrawal.instructor?.full_name || undefined,
+                                amount: Number(withdrawal.amount)
                               })}
                             >
                               <CheckCircle className="w-4 h-4 mr-1" />
@@ -930,7 +972,10 @@ export default function AdminDashboard() {
                               size="sm"
                               onClick={() => processWithdrawalMutation.mutate({ 
                                 id: withdrawal.id, 
-                                status: "rejected" 
+                                status: "rejected",
+                                email: withdrawal.instructor?.email,
+                                name: withdrawal.instructor?.full_name || undefined,
+                                amount: Number(withdrawal.amount)
                               })}
                             >
                               <XCircle className="w-4 h-4 mr-1" />
@@ -950,6 +995,9 @@ export default function AdminDashboard() {
               )}
             </motion.div>
           )}
+
+          {/* Analytics Tab */}
+          {activeTab === "analytics" && <AnalyticsCharts />}
         </div>
       </main>
     </div>
