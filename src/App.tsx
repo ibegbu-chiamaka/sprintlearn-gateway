@@ -6,6 +6,8 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
+import Courses from "./pages/Courses";
+import Settings from "./pages/Settings";
 import StudentDashboard from "./pages/dashboard/StudentDashboard";
 import InstructorDashboard from "./pages/dashboard/InstructorDashboard";
 import AdminDashboard from "./pages/dashboard/AdminDashboard";
@@ -26,6 +28,15 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/courses" element={<Courses />} />
+            <Route 
+              path="/settings" 
+              element={
+                <ProtectedRoute allowedRoles={["student", "instructor"]}>
+                  <Settings />
+                </ProtectedRoute>
+              } 
+            />
             
             {/* Course Player */}
             <Route 
