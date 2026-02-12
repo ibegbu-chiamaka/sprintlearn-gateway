@@ -37,6 +37,7 @@ interface CourseWithMeta {
   price: number | null;
   is_practical: boolean | null;
   created_at: string | null;
+  category: string | null;
   instructor_id: string;
   instructor: { full_name: string | null } | null;
   enrollment_count: number;
@@ -50,6 +51,7 @@ export default function Courses() {
   const [sortBy, setSortBy] = useState<SortOption>("popular");
   const [priceFilter, setPriceFilter] = useState<PriceFilter>("all");
   const [typeFilter, setTypeFilter] = useState<"all" | "video" | "practical">("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
 
   // Fetch published courses
   const { data: courses, isLoading } = useQuery({
@@ -132,6 +134,9 @@ export default function Courses() {
     if (priceFilter === "free") result = result.filter((c) => !c.price || c.price === 0);
     if (priceFilter === "paid") result = result.filter((c) => c.price && c.price > 0);
 
+    // Category filter
+    if (categoryFilter !== "all") result = result.filter((c) => c.category === categoryFilter);
+
     // Type filter
     if (typeFilter === "practical") result = result.filter((c) => c.is_practical);
     if (typeFilter === "video") result = result.filter((c) => !c.is_practical);
@@ -156,7 +161,14 @@ export default function Courses() {
     }
 
     return result;
-  }, [courses, searchQuery, sortBy, priceFilter, typeFilter]);
+  }, [courses, searchQuery, sortBy, priceFilter, typeFilter, categoryFilter]);
+
+  // Extract unique categories from courses
+  const categories = useMemo(() => {
+    if (!courses) return [];
+    const cats = new Set(courses.map((c) => c.category || "general"));
+    return Array.from(cats).sort();
+  }, [courses]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -209,6 +221,20 @@ export default function Courses() {
                   <SelectItem value="all">All Prices</SelectItem>
                   <SelectItem value="free">Free</SelectItem>
                   <SelectItem value="paid">Paid</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                <SelectTrigger className="w-[150px] h-9">
+                  <SelectValue placeholder="Category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  {categories.map((cat) => (
+                    <SelectItem key={cat} value={cat} className="capitalize">
+                      {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
 
@@ -273,11 +299,18 @@ export default function Courses() {
                         loading="lazy"
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
-                      {course.is_practical && (
-                        <span className="absolute top-3 left-3 px-2 py-1 rounded-full bg-sprint text-sprint-foreground text-xs font-medium">
-                          Practical
-                        </span>
-                      )}
+                      <div className="absolute top-3 left-3 flex items-center gap-1.5">
+                        {course.is_practical && (
+                          <span className="px-2 py-1 rounded-full bg-sprint text-sprint-foreground text-xs font-medium">
+                            Practical
+                          </span>
+                        )}
+                        {course.category && course.category !== "general" && (
+                          <span className="px-2 py-1 rounded-full bg-primary/80 text-primary-foreground text-xs font-medium capitalize">
+                            {course.category}
+                          </span>
+                        )}
+                      </div>
                       <div className="absolute top-3 right-3 flex items-center gap-1 px-2 py-1 rounded-full bg-black/60 text-white text-xs">
                         <Users className="w-3 h-3" />
                         {course.enrollment_count}
