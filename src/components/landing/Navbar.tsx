@@ -32,12 +32,11 @@ export function Navbar() {
             <Link to="/courses" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
               Browse Courses
             </Link>
-            <Link to="/about" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
-              About
-            </Link>
-            <Link to="/pricing" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
-              Pricing
-            </Link>
+            {user && (
+              <Link to="/settings" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+                Settings
+              </Link>
+            )}
           </div>
 
           {/* Auth Buttons */}
