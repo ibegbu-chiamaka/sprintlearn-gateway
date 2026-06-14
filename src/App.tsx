@@ -9,6 +9,7 @@ import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
 import StudentDashboard from "./pages/dashboard/StudentDashboard";
 import InstructorDashboard from "./pages/dashboard/InstructorDashboard";
+import InstructorCourseDetails from "./pages/dashboard/InstructorCourseDetails";
 import AdminDashboard from "./pages/dashboard/AdminDashboard";
 import ProtectedRoute from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
@@ -38,13 +39,21 @@ const App = () => (
             />
             
             {/* Protected Instructor Routes */}
-            <Route 
-              path="/dashboard/instructor/*" 
+            <Route
+              path="/dashboard/instructor"
               element={
                 <ProtectedRoute allowedRoles={["instructor"]}>
                   <InstructorDashboard />
                 </ProtectedRoute>
-              } 
+              }
+            />
+            <Route
+              path="/dashboard/instructor/courses/:courseId"
+              element={
+                <ProtectedRoute allowedRoles={["instructor"]}>
+                  <InstructorCourseDetails />
+                </ProtectedRoute>
+              }
             />
             
             {/* Protected Admin Routes */}
