@@ -233,7 +233,32 @@ export default function Auth() {
             </div>
 
             <div>
-              <Label htmlFor="password">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                {isLogin && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setError(null);
+                      const parsed = z.string().email().safeParse(email);
+                      if (!parsed.success) {
+                        setError("Enter your email above, then click Forgot password.");
+                        return;
+                      }
+                      setLoading(true);
+                      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+                        redirectTo: `${window.location.origin}/reset-password`,
+                      });
+                      setLoading(false);
+                      if (error) setError(error.message);
+                      else setError("Check your email for a password reset link.");
+                    }}
+                    className="text-xs text-sprint font-medium hover:underline"
+                  >
+                    Forgot password?
+                  </button>
+                )}
+              </div>
               <div className="relative mt-1">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
