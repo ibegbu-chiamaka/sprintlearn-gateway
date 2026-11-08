@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
@@ -18,62 +18,100 @@ import {
   GraduationCap,
   Settings
 } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { Input } from "@/components/ui/input";
+import { toast } from "@/hooks/use-toast";
+import { useNavigate } from "react-router-dom";
 
-// Mock data for demo
-const enrolledCourses = [
-  {
-    id: "1",
-    title: "Complete React Developer Course",
-    instructor: "Jane Smith",
-    progress: 65,
-    thumbnail: "https://images.unsplash.com/photo-1633356122544-f134324a6cee?w=400&h=225&fit=crop",
-    totalSessions: 42,
-    completedSessions: 27
-  },
-  {
-    id: "2", 
-    title: "TypeScript Masterclass",
-    instructor: "John Doe",
-    progress: 30,
-    thumbnail: "https://images.unsplash.com/photo-1516116216624-53e697fedbea?w=400&h=225&fit=crop",
-    totalSessions: 35,
-    completedSessions: 10
-  },
-  {
-    id: "3",
-    title: "Node.js Backend Development",
-    instructor: "Mike Johnson",
-    progress: 100,
-    thumbnail: "https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=400&h=225&fit=crop",
-    totalSessions: 28,
-    completedSessions: 28
-  }
-];
-
-const recommendedCourses = [
-  {
-    id: "4",
-    title: "Next.js 14 Complete Guide",
-    instructor: "Sarah Wilson",
-    price: 49.99,
-    thumbnail: "https://images.unsplash.com/photo-1627398242454-45a1465c2479?w=400&h=225&fit=crop",
-    rating: 4.8,
-    students: 1234
-  },
-  {
-    id: "5",
-    title: "AWS Cloud Practitioner",
-    instructor: "David Lee",
-    price: 79.99,
-    thumbnail: "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400&h=225&fit=crop",
-    rating: 4.9,
-    students: 2567
-  }
-];
+type StudentCourse = {
+  id: string;
+  title: string;
+  description: string | null;
+  thumbnail_url: string | null;
+  price: number | null;
+  category: string | null;
+  instructor: string;
+  progress: number;
+  totalSessions: number;
+  completedSessions: number;
+  is_practical: boolean | null;
+};
 
 export default function StudentDashboard() {
   const { user, profile, signOut } = useAuth();
   const [activeTab, setActiveTab] = useState("my-courses");
+  const [courses, setCourses] = useState<StudentCourse[]>([]);
+  const [marketplace, setMarketplace] = useState<StudentCourse[]>([]);
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [fullName, setFullName] = useState(profile?.full_name ?? "");
+  const navigate = useNavigate();
+
+  useEffect(() => { setFullName(profile?.full_name ?? ""); }, [profile?.full_name]);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      if (!user || !profile) return;
+      setLoading(true);
+      const [{ data: enrollments, error: enrollmentError }, { data: catalog, error: catalogError }] = await Promise.all([
+        supabase.from("enrollments").select("course_id, courses(id,title,description,thumbnail_url,price,category,is_practical,instructor_id,profiles(full_name))").eq("user_id", profile.id),
+        supabase.from("courses").select("id,title,description,thumbnail_url,price,category,is_practical,instructor_id,profiles(full_name)").eq("is_published", true),
+      ]);
+      if (enrollmentError || catalogError) {
+        if (active) toast({ title: "Courses unavailable", description: "We couldn't load your learning data. Please try again.", variant: "destructive" });
+        if (active) setLoading(false);
+        return;
+      }
+      const enrolled = (enrollments ?? []).flatMap((e) => e.courses ? [{ id: e.courses.id, title: e.courses.title, description: e.courses.description, thumbnail_url: e.courses.thumbnail_url, price: e.courses.price, category: e.courses.category, is_practical: e.courses.is_practical, instructor: Array.isArray(e.courses.profiles) ? e.courses.profiles[0]?.full_name ?? "Instructor" : e.courses.profiles?.full_name ?? "Instructor" }] : []);
+      const courseIds = enrolled.map((c) => c.id);
+      const [{ data: modules }, { data: progress }] = courseIds.length ? await Promise.all([
+        supabase.from("modules").select("id,course_id,sessions(id)").in("course_id", courseIds),
+        supabase.from("user_progress").select("session_id,completed").eq("user_id", profile.id).eq("completed", true),
+      ]) : [{ data: [] }, { data: [] }];
+      const progressSet = new Set((progress ?? []).map((p) => p.session_id));
+      const counts = new Map<string, { total: number; completed: number }>();
+      for (const mod of modules ?? []) {
+        const current = counts.get(mod.course_id) ?? { total: 0, completed: 0 };
+        for (const session of mod.sessions ?? []) {
+          current.total += 1;
+          if (progressSet.has(session.id)) current.completed += 1;
+        }
+        counts.set(mod.course_id, current);
+      }
+      const enrich = (item: typeof enrolled[number]): StudentCourse => {
+        const count = counts.get(item.id) ?? { total: 0, completed: 0 };
+        return { ...item, totalSessions: count.total, completedSessions: count.completed, progress: count.total ? Math.round((count.completed / count.total) * 100) : 0 };
+      };
+      const enrolledSet = new Set(courseIds);
+      const discoverable = (catalog ?? []).filter((c) => !enrolledSet.has(c.id)).map((c) => enrich({ id: c.id, title: c.title, description: c.description, thumbnail_url: c.thumbnail_url, price: c.price, category: c.category, is_practical: c.is_practical, instructor: Array.isArray(c.profiles) ? c.profiles[0]?.full_name ?? "Instructor" : c.profiles?.full_name ?? "Instructor" }));
+      if (active) { setCourses(enrolled.map(enrich)); setMarketplace(discoverable); setLoading(false); }
+    };
+    void load();
+    return () => { active = false; };
+  }, [user, profile]);
+
+  const filteredCourses = useMemo(() => courses.filter((course) => course.title.toLowerCase().includes(query.toLowerCase())), [courses, query]);
+  const filteredMarketplace = useMemo(() => marketplace.filter((course) => course.title.toLowerCase().includes(query.toLowerCase())), [marketplace, query]);
+
+  const enroll = async (course: StudentCourse) => {
+    if (!profile) return;
+    const { error } = await supabase.from("enrollments").insert({ course_id: course.id, user_id: profile.id });
+    if (error && error.code !== "23505") { toast({ title: "Unable to enroll", description: error.message, variant: "destructive" }); return; }
+    setMarketplace((items) => items.filter((item) => item.id !== course.id));
+    setCourses((items) => [...items, { ...course, progress: 0, totalSessions: 0, completedSessions: 0 }]);
+    toast({ title: "You're enrolled", description: course.title });
+    navigate(`/dashboard/student/courses/${course.id}`);
+  };
+
+  const saveProfile = async () => {
+    if (!profile || fullName.trim().length < 2) return;
+    setSavingProfile(true);
+    const { error } = await supabase.from("profiles").update({ full_name: fullName.trim() }).eq("id", profile.id);
+    setSavingProfile(false);
+    toast(error ? { title: "Profile not saved", description: error.message, variant: "destructive" } : { title: "Profile saved" });
+  };
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -178,9 +216,11 @@ export default function StudentDashboard() {
             <div className="flex items-center gap-4">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <input
+                <Input
                   type="text"
                   placeholder="Search courses..."
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
                   className="pl-10 pr-4 py-2 rounded-lg border border-input bg-background text-sm w-64 focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
@@ -231,7 +271,7 @@ export default function StudentDashboard() {
             </div>
           </motion.div>
 
-          {/* Enrolled Courses */}
+          {activeTab === "my-courses" && <>
           <motion.section
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -240,26 +280,27 @@ export default function StudentDashboard() {
           >
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-foreground">Continue Learning</h2>
-              <Button variant="ghost" size="sm" className="text-muted-foreground">
+              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => { setActiveTab("my-courses"); setQuery(""); }}>
                 View All <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {enrolledCourses.map((course) => (
+              {loading ? <p className="col-span-full py-12 text-center text-muted-foreground">Loading your courses…</p> : filteredCourses.length === 0 ? <p className="col-span-full py-12 text-center text-muted-foreground">No enrolled courses yet. Browse the catalog to get started.</p> : filteredCourses.map((course) => (
                 <motion.div
                   key={course.id}
-                  className="bg-card border border-border rounded-xl overflow-hidden card-hover"
+                  className="bg-card border border-border rounded-xl overflow-hidden card-hover cursor-pointer"
                   whileHover={{ y: -4 }}
+                  onClick={() => navigate(`/dashboard/student/courses/${course.id}`)}
                 >
                   <div className="relative aspect-video">
                     <img
-                      src={course.thumbnail}
+                      src={course.thumbnail_url || "/placeholder.svg"}
                       alt={course.title}
                       className="w-full h-full object-cover"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                    <button className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                    <button aria-label={`Continue ${course.title}`} className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity" onClick={() => navigate(`/dashboard/student/courses/${course.id}`)}>
                       <div className="w-14 h-14 rounded-full bg-sprint flex items-center justify-center glow-sprint">
                         <Play className="w-6 h-6 text-sprint-foreground ml-1" />
                       </div>
@@ -298,13 +339,13 @@ export default function StudentDashboard() {
           >
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-foreground">Recommended for You</h2>
-              <Button variant="ghost" size="sm" className="text-muted-foreground">
+              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setActiveTab("browse")}>
                 Browse All <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {recommendedCourses.map((course) => (
+              {marketplace.slice(0, 2).map((course) => (
                 <motion.div
                   key={course.id}
                   className="bg-card border border-border rounded-xl overflow-hidden card-hover flex"
@@ -312,7 +353,7 @@ export default function StudentDashboard() {
                 >
                   <div className="w-48 flex-shrink-0">
                     <img
-                      src={course.thumbnail}
+                      src={course.thumbnail_url || "/placeholder.svg"}
                       alt={course.title}
                       className="w-full h-full object-cover"
                     />
@@ -324,19 +365,29 @@ export default function StudentDashboard() {
                       </h3>
                       <p className="text-sm text-muted-foreground mb-2">{course.instructor}</p>
                       <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                        <span>⭐ {course.rating}</span>
-                        <span>{course.students.toLocaleString()} students</span>
+                        <span>{course.category || "Course"}</span>
+                        <span>{course.totalSessions} sessions</span>
                       </div>
                     </div>
                     <div className="flex items-center justify-between mt-4">
-                      <span className="text-lg font-bold text-sprint">${course.price}</span>
-                      <Button variant="sprint" size="sm">Enroll Now</Button>
+                      <span className="text-lg font-bold text-sprint">{course.price ? `$${course.price}` : "Free"}</span>
+                      <Button variant="sprint" size="sm" onClick={() => void enroll(course)}>Enroll Now</Button>
                     </div>
                   </div>
                 </motion.div>
               ))}
             </div>
           </motion.section>
+          </>}
+
+          {activeTab === "browse" && <section>
+            <div className="flex items-center justify-between mb-4"><h2 className="text-xl font-bold">Browse Courses</h2><Link to="/courses"><Button variant="outline" size="sm">Open full catalog</Button></Link></div>
+            {loading ? <p className="py-12 text-center text-muted-foreground">Loading courses…</p> : filteredMarketplace.length === 0 ? <p className="py-12 text-center text-muted-foreground">No courses match your search.</p> : <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{filteredMarketplace.map((course) => <article key={course.id} className="bg-card border border-border overflow-hidden"><img src={course.thumbnail_url || "/placeholder.svg"} alt={course.title} className="aspect-video w-full object-cover"/><div className="p-4"><p className="text-xs text-muted-foreground">{course.category || "Course"} · {course.instructor}</p><h3 className="mt-1 font-semibold">{course.title}</h3><div className="mt-4 flex items-center justify-between"><span className="font-semibold">{course.price ? `$${course.price}` : "Free"}</span><Button variant="sprint" size="sm" onClick={() => void enroll(course)}>Enroll</Button></div></div></article>)}</div>}
+          </section>}
+
+          {activeTab === "certificates" && <section><h2 className="text-xl font-bold mb-4">Certificates</h2><div className="divide-y divide-border border-y border-border">{courses.filter((course) => course.progress === 100).length ? courses.filter((course) => course.progress === 100).map((course) => <div key={course.id} className="py-4 flex items-center justify-between gap-4"><div><p className="font-medium">{course.title}</p><p className="text-sm text-muted-foreground">Course completion certificate</p></div><Button variant="outline" size="sm" onClick={() => navigate(`/dashboard/student/courses/${course.id}`)}><Award className="w-4 h-4 mr-2"/>View certificate</Button></div>) : <p className="py-8 text-muted-foreground">Certificates appear after course completion and any required project approval.</p>}</div></section>}
+
+          {activeTab === "profile" && <section className="max-w-xl"><h2 className="text-xl font-bold mb-4">Profile</h2><div className="space-y-4"><div><label htmlFor="student-name" className="text-sm font-medium">Full name</label><Input id="student-name" value={fullName} onChange={(event) => setFullName(event.target.value)} className="mt-1"/></div><div><label className="text-sm font-medium">Email</label><Input value={user?.email ?? ""} disabled className="mt-1"/></div><Button variant="sprint" onClick={() => void saveProfile()} disabled={savingProfile}>{savingProfile ? "Saving…" : "Save profile"}</Button></div></section>}
         </div>
       </main>
     </div>
