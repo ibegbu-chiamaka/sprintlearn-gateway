@@ -559,6 +559,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      complete_course_session: {
+        Args: { _session_id: string }
+        Returns: undefined
+      }
       get_profile_id: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {
@@ -566,6 +570,13 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      submit_module_quiz: {
+        Args: { _answers: Json; _quiz_id: string }
+        Returns: {
+          passed: boolean
+          score: number
+        }[]
       }
     }
     Enums: {
